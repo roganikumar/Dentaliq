@@ -1,0 +1,74 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: dentaliq_db
+    environment:
+      POSTGRES_DB: dentaliq
+      POSTGRES_USER: dentaliq
+      POSTGRES_PASSWORD: dentaliq_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dentaliq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Backend API ───────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dentaliq_api
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://dentaliq:dentaliq_local@db:5432/dentaliq
+      JWT_SECRET: local-dev-secret-change-in-production-32chars
+      JWT_EXPIRES_IN: 7d
+      AI_SERVICE_URL: http://ai:8000
+      ALLOWED_ORIGINS: http://localhost:5173
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend/src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "node src/config/migrate.js && node src/config/seed.js && npm run dev"
+
+  # ── Python AI Service ─────────────────────────────────────
+  ai:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: dentaliq_ai
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: claude-sonnet-4-20250514
+      AI_MAX_TOKENS: 800
+    ports:
+      - "8000:8000"
+
+  # ── Frontend (dev server) ─────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: dentaliq_frontend
+    environment:
+      VITE_API_URL: http://localhost:3001
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - api
+
+volumes:
+  pg_data:
